@@ -43,21 +43,21 @@ fn get_syntax_and_theme(theme_name: &str) -> Result<(&'static SyntaxSet, &'stati
 }
 
 #[repr(C)]
-pub struct HighlightFileWrapper {
+pub struct SyntectFile {
     highlighter: HighlightFile<'static>,
 }
 
 #[repr(C)]
-pub struct HighlightLinesWrapper {
+pub struct SyntectLines {
     highlighter: HighlightLines<'static>,
 }
 
 #[no_mangle]
-pub extern "C" fn create_highlight_file(
+pub extern "C" fn syntect_create_file(
     path: *const c_char,
     theme_name: *const c_char,
     error: *mut *const c_char,
-) -> *mut HighlightFileWrapper {
+) -> *mut SyntectFile {
     initialize();
 
     let path = unsafe {
@@ -95,12 +95,12 @@ pub extern "C" fn create_highlight_file(
         }
     };
 
-    Box::into_raw(Box::new(HighlightFileWrapper { highlighter }))
+    Box::into_raw(Box::new(SyntectFile { highlighter }))
 }
 
 #[no_mangle]
-pub extern "C" fn highlight_file_line(
-    wrapper: *mut HighlightFileWrapper,
+pub extern "C" fn syntect_highlight_file_line(
+    wrapper: *mut SyntectFile,
     error: *mut *const c_char,
 ) -> *const c_char {
     let wrapper = unsafe {
@@ -134,7 +134,7 @@ pub extern "C" fn highlight_file_line(
 }
 
 #[no_mangle]
-pub extern "C" fn free_highlight_file(wrapper: *mut HighlightFileWrapper) {
+pub extern "C" fn syntect_free_file(wrapper: *mut SyntectFile) {
     if !wrapper.is_null() {
         unsafe {
             drop(Box::from_raw(wrapper));
@@ -143,10 +143,10 @@ pub extern "C" fn free_highlight_file(wrapper: *mut HighlightFileWrapper) {
 }
 
 #[no_mangle]
-pub extern "C" fn create_highlight_lines(
+pub extern "C" fn syntect_create_lines(
     theme_name: *const c_char,
     error: *mut *const c_char,
-) -> *mut HighlightLinesWrapper {
+) -> *mut SyntectLines {
     initialize();
 
     let theme_name = unsafe {
@@ -180,12 +180,12 @@ pub extern "C" fn create_highlight_lines(
 
     let highlighter = HighlightLines::new(syntax, theme);
 
-    Box::into_raw(Box::new(HighlightLinesWrapper { highlighter }))
+    Box::into_raw(Box::new(SyntectLines { highlighter }))
 }
 
 #[no_mangle]
-pub extern "C" fn highlight_text_line(
-    wrapper: *mut HighlightLinesWrapper,
+pub extern "C" fn syntect_highlight_text_line(
+    wrapper: *mut SyntectLines,
     line: *const c_char,
     error: *mut *const c_char,
 ) -> *const c_char {
@@ -226,7 +226,7 @@ pub extern "C" fn highlight_text_line(
 }
 
 #[no_mangle]
-pub extern "C" fn free_highlight_lines(wrapper: *mut HighlightLinesWrapper) {
+pub extern "C" fn syntect_free_lines(wrapper: *mut SyntectLines) {
     if !wrapper.is_null() {
         unsafe {
             drop(Box::from_raw(wrapper));
@@ -235,7 +235,7 @@ pub extern "C" fn free_highlight_lines(wrapper: *mut HighlightLinesWrapper) {
 }
 
 #[no_mangle]
-pub extern "C" fn free_string(s: *mut c_char) {
+pub extern "C" fn syntect_free_string(s: *mut c_char) {
     if !s.is_null() {
         unsafe {
             drop(CString::from_raw(s));
@@ -249,41 +249,41 @@ mod tests {
     use std::ffi::CString;
 
     #[test]
-    fn test_create_highlight_file() {
+    fn test_create_file() {
         let path = CString::new("test/hello_world.c").unwrap();
         let theme_name = CString::new("base16-ocean.dark").unwrap();
         let mut error: *const c_char = std::ptr::null();
 
-        let wrapper = create_highlight_file(path.as_ptr(), theme_name.as_ptr(), &mut error);
+        let wrapper = syntect_create_file(path.as_ptr(), theme_name.as_ptr(), &mut error);
 
         if !wrapper.is_null() {
-            println!("HighlightFileWrapper created successfully");
+            println!("SyntectFile created successfully");
         } else {
             let err_msg = unsafe { CStr::from_ptr(error).to_str().unwrap() };
             println!("Error: {}", err_msg);
         }
 
-        assert!(!wrapper.is_null(), "Failed to create HighlightFileWrapper");
+        assert!(!wrapper.is_null(), "Failed to create SyntectFile");
         assert!(error.is_null(), "Unexpected error: {:?}", unsafe {
             CStr::from_ptr(error).to_str().unwrap()
         });
 
-        free_highlight_file(wrapper);
+        syntect_free_file(wrapper);
     }
 
     #[test]
-    fn test_create_highlight_lines() {
+    fn test_create_lines() {
         let theme_name = CString::new("base16-ocean.dark").unwrap();
         let mut error: *const c_char = std::ptr::null();
 
-        let wrapper = create_highlight_lines(theme_name.as_ptr(), &mut error);
+        let wrapper = syntect_create_lines(theme_name.as_ptr(), &mut error);
 
-        assert!(!wrapper.is_null(), "Failed to create HighlightLinesWrapper");
+        assert!(!wrapper.is_null(), "Failed to create SyntectLines");
         assert!(error.is_null(), "Unexpected error: {:?}", unsafe {
             CStr::from_ptr(error).to_str().unwrap()
         });
 
-        free_highlight_lines(wrapper);
+        syntect_free_lines(wrapper);
     }
 
     #[test]
@@ -291,20 +291,20 @@ mod tests {
         let theme_name = CString::new("base16-ocean.dark").unwrap();
         let mut error: *const c_char = std::ptr::null();
 
-        let wrapper = create_highlight_lines(theme_name.as_ptr(), &mut error);
-        assert!(!wrapper.is_null(), "Failed to create HighlightLinesWrapper");
+        let wrapper = syntect_create_lines(theme_name.as_ptr(), &mut error);
+        assert!(!wrapper.is_null(), "Failed to create SyntectLines");
         assert!(error.is_null(), "Unexpected error: {:?}", unsafe {
             CStr::from_ptr(error).to_str().unwrap()
         });
 
         let line = CString::new("fn main() { println!(\"Hello, world!\"); }").unwrap();
-        let highlighted_line = highlight_text_line(wrapper, line.as_ptr(), &mut error);
+        let highlighted_line = syntect_highlight_text_line(wrapper, line.as_ptr(), &mut error);
         assert!(!highlighted_line.is_null(), "Failed to highlight line");
         assert!(error.is_null(), "Unexpected error: {:?}", unsafe {
             CStr::from_ptr(error).to_str().unwrap()
         });
 
-        free_string(highlighted_line as *mut c_char);
-        free_highlight_lines(wrapper);
+        syntect_free_string(highlighted_line as *mut c_char);
+        syntect_free_lines(wrapper);
     }
 }

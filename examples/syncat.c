@@ -6,23 +6,23 @@
 void check_error(const char *function, const char *error) {
     if (error != NULL) {
         fprintf(stderr, "%s error: %s\n", function, error);
-        free_string((char*)error);
+        syntect_free_string((char*)error);
         exit(1);
     }
 }
 
 void highlight_file(const char *filename) {
     const char *error = NULL;
-    HighlightFileWrapper *wrapper = create_highlight_file(filename, "base16-ocean.dark", &error);
+    SyntectFile *wrapper = syntect_create_file(filename, "base16-ocean.dark", &error);
     check_error("create_highlight_file", error);
 
     const char *line = NULL;
-    while ((line = highlight_file_line(wrapper, &error)) != NULL) {
+    while ((line = syntect_highlight_file_line(wrapper, &error)) != NULL) {
         printf("%s", line);
-        free_string((char*)line);
+        syntect_free_string((char*)line);
     }
 
-    free_highlight_file(wrapper);
+    syntect_free_file(wrapper);
 }
 
 int main(int argc, char *argv[]) {
