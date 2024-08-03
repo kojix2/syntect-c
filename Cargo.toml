@@ -1,0 +1,11 @@
+[package]
+name = "syntect-c"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+syntect = "5.2"
+libc = "0.2"
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
