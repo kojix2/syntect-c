@@ -2,10 +2,13 @@ extern crate libc;
 extern crate syntect;
 
 use libc::c_char;
+use std::collections::BTreeMap;
 use std::ffi::{CStr, CString};
 use std::io::BufRead;
+use std::path::Path;
 use std::ptr;
 use std::sync::Once;
+use syntect::dumps::{dump_to_file, from_dump_file};
 use syntect::easy::{HighlightFile, HighlightLines};
 use syntect::highlighting::{Style, Theme, ThemeSet};
 use syntect::parsing::SyntaxSet;
@@ -42,6 +45,26 @@ fn get_syntax_and_theme(theme_name: &str) -> Result<(&'static SyntaxSet, &'stati
     }
 }
 
+fn load_theme(tm_file: &str, enable_caching: bool) -> Result<Theme, String> {
+    let tm_path = Path::new(tm_file);
+
+    if enable_caching {
+        let tm_cache = tm_path.with_extension("tmdump");
+
+        if tm_cache.exists() {
+            from_dump_file(tm_cache).map_err(|e| format!("Error loading from cache: {}", e))
+        } else {
+            let theme =
+                ThemeSet::get_theme(tm_path).map_err(|e| format!("Error loading theme: {}", e))?;
+            dump_to_file(&theme, tm_cache)
+                .map_err(|e| format!("Error dumping theme to cache: {}", e))?;
+            Ok(theme)
+        }
+    } else {
+        ThemeSet::get_theme(tm_path).map_err(|e| format!("Error loading theme: {}", e))
+    }
+}
+
 #[repr(C)]
 pub struct SyntectFile {
     highlighter: HighlightFile<'static>,
@@ -50,6 +73,16 @@ pub struct SyntectFile {
 #[repr(C)]
 pub struct SyntectLines {
     highlighter: HighlightLines<'static>,
+}
+
+#[repr(C)]
+pub struct SyntectThemeSet {
+    themes: BTreeMap<String, Theme>,
+}
+
+#[repr(C)]
+pub struct SyntectTheme {
+    theme: Theme,
 }
 
 #[no_mangle]
@@ -234,6 +267,122 @@ pub extern "C" fn syntect_free_lines(wrapper: *mut SyntectLines) {
     }
 }
 
+// C-compatible functions for managing ThemeSet and Theme
+#[no_mangle]
+pub extern "C" fn syntect_load_theme_set_from_folder(
+    folder: *const c_char,
+    error: *mut *const c_char,
+) -> *mut SyntectThemeSet {
+    let folder = unsafe {
+        CStr::from_ptr(folder).to_str().unwrap_or_else(|_| {
+            *error = CString::new("Invalid folder path").unwrap().into_raw();
+            return "";
+        })
+    };
+
+    match ThemeSet::load_from_folder(folder) {
+        Ok(theme_set) => Box::into_raw(Box::new(SyntectThemeSet {
+            themes: theme_set.themes,
+        })),
+        Err(err) => {
+            unsafe {
+                *error = CString::new(format!("Failed to load themes: {}", err))
+                    .unwrap()
+                    .into_raw();
+            }
+            ptr::null_mut()
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn syntect_load_theme(
+    theme_path: *const c_char,
+    enable_caching: bool,
+    error: *mut *const c_char,
+) -> *mut SyntectTheme {
+    let theme_path = unsafe {
+        CStr::from_ptr(theme_path).to_str().unwrap_or_else(|_| {
+            *error = CString::new("Invalid theme path").unwrap().into_raw();
+            return "";
+        })
+    };
+
+    match load_theme(theme_path, enable_caching) {
+        Ok(theme) => Box::into_raw(Box::new(SyntectTheme { theme })),
+        Err(err) => {
+            unsafe {
+                *error = CString::new(err).unwrap().into_raw();
+            }
+            ptr::null_mut()
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn syntect_get_theme_from_set(
+    theme_set: *mut SyntectThemeSet,
+    theme_name: *const c_char,
+    error: *mut *const c_char,
+) -> *mut SyntectTheme {
+    let theme_set = unsafe {
+        assert!(!theme_set.is_null());
+        &mut *theme_set
+    };
+
+    let theme_name = unsafe {
+        CStr::from_ptr(theme_name).to_str().unwrap_or_else(|_| {
+            *error = CString::new("Invalid theme name").unwrap().into_raw();
+            return "";
+        })
+    };
+
+    match theme_set.themes.get(theme_name) {
+        Some(theme) => Box::into_raw(Box::new(SyntectTheme {
+            theme: theme.clone(),
+        })),
+        None => {
+            unsafe {
+                *error = CString::new(format!("Theme '{}' not found", theme_name))
+                    .unwrap()
+                    .into_raw();
+            }
+            ptr::null_mut()
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn syntect_free_theme_set(theme_set: *mut SyntectThemeSet) {
+    if !theme_set.is_null() {
+        unsafe {
+            drop(Box::from_raw(theme_set));
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn syntect_free_theme(theme: *mut SyntectTheme) {
+    if !theme.is_null() {
+        unsafe {
+            drop(Box::from_raw(theme));
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn syntect_get_theme_name(theme: *const SyntectTheme) -> *const c_char {
+    let theme = unsafe {
+        assert!(!theme.is_null());
+        &*theme
+    };
+
+    match &theme.theme.name {
+        Some(name) => CString::new(name.clone()).unwrap().into_raw(),
+        None => ptr::null(),
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn syntect_free_string(s: *mut c_char) {
     if !s.is_null() {
@@ -252,7 +401,7 @@ mod tests {
     fn test_create_file() {
         let path = CString::new("test/hello_world.c").unwrap();
         let theme_name = CString::new("base16-ocean.dark").unwrap();
-        let mut error: *const c_char = std::ptr::null();
+        let mut error: *const c_char = ptr::null();
 
         let wrapper = syntect_create_file(path.as_ptr(), theme_name.as_ptr(), &mut error);
 
@@ -274,7 +423,7 @@ mod tests {
     #[test]
     fn test_create_lines() {
         let theme_name = CString::new("base16-ocean.dark").unwrap();
-        let mut error: *const c_char = std::ptr::null();
+        let mut error: *const c_char = ptr::null();
 
         let wrapper = syntect_create_lines(theme_name.as_ptr(), &mut error);
 
@@ -289,7 +438,7 @@ mod tests {
     #[test]
     fn test_highlight_text_line() {
         let theme_name = CString::new("base16-ocean.dark").unwrap();
-        let mut error: *const c_char = std::ptr::null();
+        let mut error: *const c_char = ptr::null();
 
         let wrapper = syntect_create_lines(theme_name.as_ptr(), &mut error);
         assert!(!wrapper.is_null(), "Failed to create SyntectLines");
@@ -306,5 +455,57 @@ mod tests {
 
         syntect_free_string(highlighted_line as *mut c_char);
         syntect_free_lines(wrapper);
+    }
+
+    #[test]
+    fn test_load_theme_set_from_folder() {
+        let folder = CString::new("test/themes").unwrap();
+        let mut error: *const c_char = ptr::null();
+
+        let theme_set = syntect_load_theme_set_from_folder(folder.as_ptr(), &mut error);
+
+        assert!(!theme_set.is_null(), "Failed to load theme set");
+        assert!(error.is_null(), "Unexpected error: {:?}", unsafe {
+            CStr::from_ptr(error).to_str().unwrap()
+        });
+
+        syntect_free_theme_set(theme_set);
+    }
+
+    #[test]
+    fn test_get_theme_from_set() {
+        let folder = CString::new("test/themes").unwrap();
+        let theme_name = CString::new("base16-ocean").unwrap();
+        let mut error: *const c_char = ptr::null();
+
+        let theme_set = syntect_load_theme_set_from_folder(folder.as_ptr(), &mut error);
+        assert!(!theme_set.is_null(), "Failed to load theme set");
+        assert!(error.is_null(), "Unexpected error: {:?}", unsafe {
+            CStr::from_ptr(error).to_str().unwrap()
+        });
+
+        let theme = syntect_get_theme_from_set(theme_set, theme_name.as_ptr(), &mut error);
+        assert!(!theme.is_null(), "Failed to get theme from set");
+        assert!(error.is_null(), "Unexpected error: {:?}", unsafe {
+            CStr::from_ptr(error).to_str().unwrap()
+        });
+
+        syntect_free_theme(theme);
+        syntect_free_theme_set(theme_set);
+    }
+
+    #[test]
+    fn test_load_theme() {
+        let theme_path = CString::new("test/themes/base16-ocean.tmTheme").unwrap();
+        let mut error: *const c_char = ptr::null();
+
+        let theme = syntect_load_theme(theme_path.as_ptr(), false, &mut error);
+
+        assert!(!theme.is_null(), "Failed to load theme");
+        assert!(error.is_null(), "Unexpected error: {:?}", unsafe {
+            CStr::from_ptr(error).to_str().unwrap()
+        });
+
+        syntect_free_theme(theme);
     }
 }
