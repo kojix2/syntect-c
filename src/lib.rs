@@ -131,6 +131,54 @@ pub extern "C" fn syntect_create_file(
 }
 
 #[no_mangle]
+pub extern "C" fn syntect_create_file_with_theme(
+    path: *const c_char,
+    theme: *const SyntectTheme,
+    error: *mut *const c_char,
+) -> *mut SyntectFile {
+    initialize();
+
+    let path = unsafe {
+        CStr::from_ptr(path).to_str().unwrap_or_else(|_| {
+            *error = CString::new("Invalid path").unwrap().into_raw();
+            return "";
+        })
+    };
+
+    let theme = unsafe { &(*theme).theme };
+
+    let ss = unsafe {
+        SYNTAX_SET
+            .as_ref()
+            .ok_or_else(|| "SyntaxSet not initialized".to_string())
+    };
+
+    let ss = match ss {
+        Ok(s) => s,
+        Err(err) => {
+            unsafe {
+                *error = CString::new(err).unwrap().into_raw();
+            }
+            return ptr::null_mut();
+        }
+    };
+
+    let highlighter = match HighlightFile::new(path, ss, theme) {
+        Ok(highlighter) => highlighter,
+        Err(err) => {
+            unsafe {
+                *error = CString::new(format!("Failed to create HighlightFile: {}", err))
+                    .unwrap()
+                    .into_raw();
+            }
+            return ptr::null_mut();
+        }
+    };
+
+    Box::into_raw(Box::new(SyntectFile { highlighter }))
+}
+
+#[no_mangle]
 pub extern "C" fn syntect_highlight_file_line(
     wrapper: *mut SyntectFile,
     error: *mut *const c_char,
@@ -216,6 +264,48 @@ pub extern "C" fn syntect_create_lines(
 }
 
 #[no_mangle]
+pub extern "C" fn syntect_create_lines_with_theme(
+    theme: *const SyntectTheme,
+    error: *mut *const c_char,
+) -> *mut SyntectLines {
+    initialize();
+
+    let theme = unsafe { &(*theme).theme };
+
+    let ss = unsafe {
+        SYNTAX_SET
+            .as_ref()
+            .ok_or_else(|| "SyntaxSet not initialized".to_string())
+    };
+
+    let ss = match ss {
+        Ok(s) => s,
+        Err(err) => {
+            unsafe {
+                *error = CString::new(err).unwrap().into_raw();
+            }
+            return ptr::null_mut();
+        }
+    };
+
+    let syntax = match ss.find_syntax_by_extension("rs") {
+        Some(syntax) => syntax,
+        None => {
+            unsafe {
+                *error = CString::new("Syntax for 'rs' not found")
+                    .unwrap()
+                    .into_raw();
+            }
+            return ptr::null_mut();
+        }
+    };
+
+    let highlighter = HighlightLines::new(syntax, theme);
+
+    Box::into_raw(Box::new(SyntectLines { highlighter }))
+}
+
+#[no_mangle]
 pub extern "C" fn syntect_highlight_text_line(
     wrapper: *mut SyntectLines,
     line: *const c_char,
@@ -264,6 +354,14 @@ pub extern "C" fn syntect_free_lines(wrapper: *mut SyntectLines) {
             drop(Box::from_raw(wrapper));
         }
     }
+}
+
+#[no_mangle]
+pub extern "C" fn syntect_load_default_theme_set(
+    error: *mut *const c_char,
+) -> *mut SyntectThemeSet {
+    let ts = ThemeSet::load_defaults();
+    Box::into_raw(Box::new(SyntectThemeSet { themes: ts }))
 }
 
 #[no_mangle]
@@ -446,7 +544,6 @@ pub extern "C" fn syntect_free_string(s: *mut c_char) {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
