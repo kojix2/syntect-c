@@ -4,7 +4,6 @@ extern crate syntect;
 use libc::c_char;
 use std::ffi::{CStr, CString};
 use std::io::BufRead;
-use std::path::Path;
 use std::ptr;
 use std::sync::Once;
 use syntect::easy::{HighlightFile, HighlightLines};
