@@ -361,6 +361,17 @@ pub extern "C" fn syntect_load_default_theme_set(
     error: *mut *const c_char,
 ) -> *mut SyntectThemeSet {
     let ts = ThemeSet::load_defaults();
+
+    // Check if ts is empty and set an error message if necessary
+    if ts.themes.is_empty() {
+        unsafe {
+            *error = CString::new("Failed to load default theme set")
+                .unwrap()
+                .into_raw();
+        }
+        return std::ptr::null_mut();
+    }
+
     Box::into_raw(Box::new(SyntectThemeSet { themes: ts }))
 }
 
