@@ -4,6 +4,7 @@ extern crate syntect;
 use libc::c_char;
 use std::ffi::{CStr, CString};
 use std::io::BufRead;
+use std::path::Path;
 use std::ptr;
 use std::sync::Once;
 use syntect::easy::{HighlightFile, HighlightLines};
@@ -18,17 +19,17 @@ static mut SYNTAX_SET: Option<SyntaxSet> = None;
 fn initialize() {
     INIT.call_once(|| {
         let ts = ThemeSet::load_defaults();
-        let ps = SyntaxSet::load_defaults_newlines();
+        let ss = SyntaxSet::load_defaults_newlines();
         unsafe {
             THEME_SET = Some(ts);
-            SYNTAX_SET = Some(ps);
+            SYNTAX_SET = Some(ss);
         }
     });
 }
 
 fn get_syntax_and_theme(theme_name: &str) -> Result<(&'static SyntaxSet, &'static Theme), String> {
     unsafe {
-        let ps = SYNTAX_SET
+        let ss = SYNTAX_SET
             .as_ref()
             .ok_or_else(|| "SyntaxSet not initialized".to_string())?;
         let ts = THEME_SET
@@ -38,7 +39,7 @@ fn get_syntax_and_theme(theme_name: &str) -> Result<(&'static SyntaxSet, &'stati
             .themes
             .get(theme_name)
             .ok_or_else(|| format!("Theme '{}' not found", theme_name))?;
-        Ok((ps, theme))
+        Ok((ss, theme))
     }
 }
 
@@ -73,7 +74,7 @@ pub extern "C" fn syntect_create_file(
         })
     };
 
-    let (ps, theme) = match get_syntax_and_theme(theme_name) {
+    let (ss, theme) = match get_syntax_and_theme(theme_name) {
         Ok(result) => result,
         Err(err) => {
             unsafe {
@@ -83,7 +84,7 @@ pub extern "C" fn syntect_create_file(
         }
     };
 
-    let highlighter = match HighlightFile::new(path, ps, theme) {
+    let highlighter = match HighlightFile::new(path, ss, theme) {
         Ok(highlighter) => highlighter,
         Err(err) => {
             unsafe {
@@ -156,7 +157,7 @@ pub extern "C" fn syntect_create_lines(
         })
     };
 
-    let (ps, theme) = match get_syntax_and_theme(theme_name) {
+    let (ss, theme) = match get_syntax_and_theme(theme_name) {
         Ok(result) => result,
         Err(err) => {
             unsafe {
@@ -166,7 +167,7 @@ pub extern "C" fn syntect_create_lines(
         }
     };
 
-    let syntax = match ps.find_syntax_by_extension("rs") {
+    let syntax = match ss.find_syntax_by_extension("rs") {
         Some(syntax) => syntax,
         None => {
             unsafe {
