@@ -9,3 +9,7 @@ libc = "0.2"
 
 [lib]
 crate-type = ["cdylib", "staticlib"]
+
+[profile.release]
+lto = true
+codegen-units = 1
